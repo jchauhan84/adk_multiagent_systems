@@ -1,0 +1,7 @@
+# This creates a proper .gitignore file
+@"
+venv/
+.env
+__pycache__/
+*.log
+"@ | Out-File -FilePath .gitignore -Encoding utf8

@@ -1,0 +1,108 @@
+import os
+import sys
+from typing import List, Optional,Dict
+import logging
+
+sys.path.append("..")
+from callback_logging import log_query_to_model,log_model_response
+from dotenv import load_dotenv
+import google.cloud.logging
+from google.adk import agent
+from google.adk.models import Gemini
+from google.genai import types
+
+from google.adk.tools.tool_context import ToolContext
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from adk_utils.plugins import Graceful429Plugin
+from google.adk.apps.app import App
+
+load_dotenv()
+
+cloud_logging_client = google.cloud.logging.Client()
+cloud_logging_client.setup_logging()
+
+RETRY_OPTIONS = types.HTTPRetryOptions(initial_delay=1, attempts=6)
+
+# Tools
+def save_attractions_to_state(tool_context: ToolContext, attractions: List[str]) -> dict[str, str]:
+    """Saves the list of attractions to the state["attractions"].
+    Args:
+        attractions [str]: A list of strings to add to the list of attractions.
+    Returns:
+            None
+    """
+    # Load existing attractions from state. If none exist, start  an empty list.
+    existing_attractions = tool_context.state.get("attractions", [])
+
+    #Update the 'attractions' key with a combo of old and new lists.
+    # When the tool is run,ADK will create an event and make 
+    # corresponding updates in the session's state.
+    tool_context.state["attractions"] = existing_attractions + attractions
+
+    #A best practice for tools is to return a status message in a return dict
+    return {"status": "success"}
+
+# Agents
+
+attraction_planner_agent = Agent(
+    name="attraction_planner_agent",
+    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    description="Build a list of attractions to visit in a country.",
+    instructions="""
+        - Provide the user options for attractions to visit within their selected country.
+        - When they reply, use your tool to save their selected attractions and then provide more possible attractions.
+        - If they ask to view the list, provide a bulleted list of {attractions?} and then suggest some more.
+        """,
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
+    #Tools
+    tools=[save_attractions_to_state]
+)
+
+travel_brainstormer = Agent(
+    name="travel_brainstormer",
+    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    description="Help a user decide what country to visit.",
+    instructions="""
+        Provide a few suggestions of popular countries for traveller.
+
+        Help a user identify their primary goal of travel:
+        adventure,leisure,learning,shopping,or viewing art
+
+        Identify countries that would make great destinations
+        based on their priorities.
+        """,
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
+)
+
+root_agent = Agent(
+    name="steering",
+    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    description="Start a user on a travel adventure.",
+    instructions="""
+        Ask the user if they know where they would like to travel
+        or if they need some help in deciding.
+        If they need help in deciding,send them to 'travel_brainstormer'.
+        If they know where they want to go, send them to 'attraction_planner_agent' to plan out their trip.
+        """,
+        generate_content_config=types.GenerateContentConfig(temperature=0,),
+
+        #add the subagents as tools so the root agent can call them
+        tools=[travel_brainstormer,attraction_planner_agent]
+)
+
+graceful_plugin = Graceful429Plugin(
+    name="graceful_429_plugin",
+    fallback_text={
+        "default": "**[Simulated Response via 429 Graceful Fallback]**\n\nThe API is out of quota. Please try again later." 
+    }
+)
+graceful_plugin.apply_429_interceptor(root_agent)
+
+app=App(
+    name="parents_and_subagents_app",
+    root_agent=root_agent,
+    plugins=[graceful_plugin]
+)
