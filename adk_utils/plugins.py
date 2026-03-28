@@ -37,7 +37,7 @@ class Graceful429Plugin(BasePlugin):
             self,
             *,
             agent,
-            model.
+            model,
             input,
             error,
     )-> LlmResponse | None:

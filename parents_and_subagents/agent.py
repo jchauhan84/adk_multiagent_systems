@@ -7,7 +7,7 @@ sys.path.append("..")
 from callback_logging import log_query_to_model,log_model_response
 from dotenv import load_dotenv
 import google.cloud.logging
-from google.adk import agent
+from google.adk import Agent
 from google.adk.models import Gemini
 from google.genai import types
 
@@ -22,9 +22,8 @@ load_dotenv()
 cloud_logging_client = google.cloud.logging.Client()
 cloud_logging_client.setup_logging()
 
-RETRY_OPTIONS = types.HTTPRetryOptions(initial_delay=1, attempts=6)
 
-# Tools
+# sub_agents
 def save_attractions_to_state(tool_context: ToolContext, attractions: List[str]) -> dict[str, str]:
     """Saves the list of attractions to the state["attractions"].
     Args:
@@ -40,31 +39,31 @@ def save_attractions_to_state(tool_context: ToolContext, attractions: List[str])
     # corresponding updates in the session's state.
     tool_context.state["attractions"] = existing_attractions + attractions
 
-    #A best practice for tools is to return a status message in a return dict
+    #A best practice for sub_agents is to return a status message in a return dict
     return {"status": "success"}
 
 # Agents
 
 attraction_planner_agent = Agent(
     name="attraction_planner_agent",
-    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    model=Gemini(model=os.getenv("MODEL")),
     description="Build a list of attractions to visit in a country.",
-    instructions="""
+    instruction="""
         - Provide the user options for attractions to visit within their selected country.
         - When they reply, use your tool to save their selected attractions and then provide more possible attractions.
         - If they ask to view the list, provide a bulleted list of {attractions?} and then suggest some more.
         """,
     before_model_callback=log_query_to_model,
     after_model_callback=log_model_response,
-    #Tools
+    #sub_agents
     tools=[save_attractions_to_state]
 )
 
 travel_brainstormer = Agent(
     name="travel_brainstormer",
-    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    model=Gemini(model=os.getenv("MODEL")),
     description="Help a user decide what country to visit.",
-    instructions="""
+    instruction="""
         Provide a few suggestions of popular countries for traveller.
 
         Help a user identify their primary goal of travel:
@@ -79,9 +78,9 @@ travel_brainstormer = Agent(
 
 root_agent = Agent(
     name="steering",
-    model=Gemini(model=os.getenv("MODEL"),retry_options=RETRY_OPTIONS),
+    model=Gemini(model=os.getenv("MODEL")),
     description="Start a user on a travel adventure.",
-    instructions="""
+    instruction="""
         Ask the user if they know where they would like to travel
         or if they need some help in deciding.
         If they need help in deciding,send them to 'travel_brainstormer'.
@@ -89,8 +88,8 @@ root_agent = Agent(
         """,
         generate_content_config=types.GenerateContentConfig(temperature=0,),
 
-        #add the subagents as tools so the root agent can call them
-        tools=[travel_brainstormer,attraction_planner_agent]
+        #add the subagents as sub_agents so the root agent can call them
+        sub_agents=[travel_brainstormer,attraction_planner_agent]
 )
 
 graceful_plugin = Graceful429Plugin(

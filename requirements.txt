@@ -1,9 +1,2 @@
-langchain-community==0.3.20
+﻿langchain-community==0.3.20
 wikipedia==1.4.0
-google-adk==0.1.0
-deprecated
-google-cloud-aiplatform
-python-dotenv
-google-cloud-logging 
-google-cloud-storage 
-google-cloud-resource-manager
